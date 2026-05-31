@@ -12,6 +12,9 @@ output/
 training/dataset/
 training/dataset_yolo/
 
+# Training run artifacts (checkpoints, plots, logs)
+runs/
+
 # Python
 __pycache__/
 *.pyc

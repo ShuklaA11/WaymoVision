@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--device", default="0")
     ap.add_argument("--max-gap", type=int, default=30, help="max frames to hold/interpolate a missing box")
     ap.add_argument("--min-frames", type=int, default=8, help="drop tracks shorter than this (removes ghost/flicker tracks)")
+    ap.add_argument("--trail-len", type=int, default=30, help="frames of fading trajectory trail to draw behind each object (0 = off)")
     ap.add_argument("--out", default=None, help="annotated mp4 (default: <video>_tracked.mp4)")
     ap.add_argument("--csv", default=None, help="per-frame track dump (default: <video>_tracks.csv)")
     args = ap.parse_args()
@@ -121,6 +122,14 @@ def main():
         for fnum, d in frames.items():
             by_frame[fnum].append((tid, d))
 
+    # Per-track bottom-center points (for fading trajectory trails).
+    trail_pts: dict[int, dict[int, tuple[int, int]]] = {}
+    for tid, frames in frames_by_id.items():
+        trail_pts[tid] = {
+            fn: (int((d["bbox"][0] + d["bbox"][2]) / 2), int(d["bbox"][3]))
+            for fn, d in frames.items()
+        }
+
     # Pass 2: re-read video and draw persistent boxes.
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -134,8 +143,17 @@ def main():
         if not ok:
             break
         for tid, d in by_frame.get(fnum, []):
-            x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
             color = _color_for_id(tid)
+            # Fading trajectory trail: recent bottom-center points up to now.
+            if args.trail_len > 0:
+                pts = [trail_pts[tid].get(f) for f in range(fnum - args.trail_len, fnum + 1)]
+                pts = [p for p in pts if p is not None]
+                for k in range(1, len(pts)):
+                    fade = k / len(pts)  # older = fainter/thinner
+                    col = tuple(int(c * (0.3 + 0.7 * fade)) for c in color)
+                    cv2.line(frame, pts[k - 1], pts[k], col, max(1, int(1 + 3 * fade)), cv2.LINE_AA)
+
+            x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
             cls_name = CLASS_NAMES[d["cls"]] if 0 <= d["cls"] < len(CLASS_NAMES) else str(d["cls"])
             thickness = 1 if d["interp"] else 2
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)

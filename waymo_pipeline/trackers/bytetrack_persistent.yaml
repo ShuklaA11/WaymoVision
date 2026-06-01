@@ -1,0 +1,14 @@
+# Persistent ByteTrack config — tuned to stop bounding-box flicker.
+# Applied explicitly by track_video.py (the bundled default was never used).
+#
+# vs Ultralytics defaults: track_buffer 30 -> 90 (tracks survive longer
+# occlusions, fewer ID resets), low thresholds so confident detections feed
+# ByteTrack's second-stage low-score association instead of being dropped.
+
+tracker_type: bytetrack
+track_high_thresh: 0.25  # first-stage match threshold
+track_low_thresh: 0.10   # second-stage recovery of low-score boxes (anti-flicker)
+new_track_thresh: 0.30   # require a clearly new object before spawning an ID (fewer dup IDs)
+track_buffer: 90         # frames to keep a lost track alive (~3.6s @ 25fps)
+match_thresh: 0.80       # association IoU/cost threshold
+fuse_score: True         # fuse detection score with motion/IoU (stabilizes weak detections)

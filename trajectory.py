@@ -21,6 +21,8 @@ import cv2
 import numpy as np
 from scipy.signal import savgol_filter
 
+from waymo_pipeline.consolidate import consolidate_track
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -54,25 +56,28 @@ def _smooth(vals: np.ndarray, window: int, poly: int) -> np.ndarray:
 
 
 def load_tracks(csv_path: str) -> dict[int, dict]:
-    """Group CSV rows by track_id -> frame-sorted trajectory points."""
+    """Group CSV rows by track_id -> frame-sorted trajectory points.
+
+    Bottom-center (x_mid, y2) is the ground-contact anchor; per-frame class and
+    confidence are retained for track consolidation.
+    """
     by_id: dict[int, list] = defaultdict(list)
-    cls_of: dict[int, str] = {}
     with open(csv_path, newline="") as f:
         for r in csv.DictReader(f):
             tid = int(r["track_id"])
             x1, y1, x2, y2 = (float(r[k]) for k in ("x1", "y1", "x2", "y2"))
-            # Bottom-center = ground-contact anchor for map projection.
-            by_id[tid].append((int(r["frame"]), (x1 + x2) / 2.0, y2))
-            cls_of[tid] = r["class"]
+            conf = float(r["conf"]) if "conf" in r and r["conf"] != "" else 0.0
+            by_id[tid].append((int(r["frame"]), (x1 + x2) / 2.0, y2, r["class"], conf))
 
     tracks = {}
     for tid, pts in by_id.items():
         pts.sort(key=lambda p: p[0])
         tracks[tid] = {
-            "class": cls_of[tid],
             "frames": np.array([p[0] for p in pts]),
             "x": np.array([p[1] for p in pts]),
             "y": np.array([p[2] for p in pts]),
+            "classes": [p[3] for p in pts],
+            "confs": [p[4] for p in pts],
         }
     return tracks
 
@@ -86,6 +91,9 @@ def main():
     ap.add_argument("--min-frames", type=int, default=8)
     ap.add_argument("--window", type=int, default=15, help="Savitzky-Golay window (frames)")
     ap.add_argument("--poly", type=int, default=2, help="Savitzky-Golay polynomial order")
+    ap.add_argument("--min-displacement", type=float, default=40.0, help="drop tracks moving less than this (px); 0 = keep stationary")
+    ap.add_argument("--av-min-ratio", type=float, default=0.60, help="min AV-frame fraction to keep an AV label")
+    ap.add_argument("--av-min-conf", type=float, default=0.55, help="min mean confidence to keep an AV label")
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
@@ -94,6 +102,21 @@ def main():
 
     tracks = load_tracks(str(csv_path))
     tracks = {tid: t for tid, t in tracks.items() if len(t["frames"]) >= args.min_frames}
+
+    # Consolidate: drop stationary/ghost tracks, assign one stable label each.
+    kept = {}
+    for tid, t in tracks.items():
+        pts = list(zip(t["x"].tolist(), t["y"].tolist()))
+        keep, label = consolidate_track(
+            pts, t["classes"], t["confs"],
+            min_displacement=args.min_displacement,
+            av_min_ratio=args.av_min_ratio,
+            av_min_conf=args.av_min_conf,
+        )
+        if keep:
+            t["class"] = label
+            kept[tid] = t
+    tracks = kept
 
     # Smooth each trajectory.
     for t in tracks.values():

@@ -20,6 +20,8 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
+from waymo_pipeline.consolidate import consolidate_track
+
 # Fine-tuned class order (alphabetical, from prepare_dataset.py)
 CLASS_NAMES = ["AV", "BC", "HDV", "MC", "PED", "SCO"]
 
@@ -70,6 +72,10 @@ def main():
     ap.add_argument("--max-gap", type=int, default=30, help="max frames to hold/interpolate a missing box")
     ap.add_argument("--min-frames", type=int, default=8, help="drop tracks shorter than this (removes ghost/flicker tracks)")
     ap.add_argument("--trail-len", type=int, default=30, help="frames of fading trajectory trail to draw behind each object (0 = off)")
+    ap.add_argument("--min-displacement", type=float, default=40.0, help="path movement (px) required for an AV label; stationary objects can't be AV")
+    ap.add_argument("--av-min-ratio", type=float, default=0.60, help="min AV-frame fraction to keep an AV label")
+    ap.add_argument("--av-min-conf", type=float, default=0.55, help="min mean confidence to keep an AV label")
+    ap.add_argument("--drop-stationary", action="store_true", help="also remove non-moving tracks from the video (off by default so stopped/queued cars stay boxed)")
     ap.add_argument("--out", default=None, help="annotated mp4 (default: <video>_tracked.mp4)")
     ap.add_argument("--csv", default=None, help="per-frame track dump (default: <video>_tracks.csv)")
     args = ap.parse_args()
@@ -116,6 +122,25 @@ def main():
     # Fill short gaps so boxes persist through missed detections.
     frames_by_id = fill_gaps(frames_by_id, args.max_gap)
 
+    # Consolidate: drop stationary/ghost tracks, assign one stable label each.
+    label_of: dict[int, str] = {}
+    for tid, frames in list(frames_by_id.items()):
+        ordered = [frames[fn] for fn in sorted(frames)]
+        pts = [((d["bbox"][0] + d["bbox"][2]) / 2, d["bbox"][3]) for d in ordered]
+        classes = [CLASS_NAMES[d["cls"]] if 0 <= d["cls"] < len(CLASS_NAMES) else str(d["cls"]) for d in ordered]
+        confs = [d["conf"] for d in ordered]
+        keep, label = consolidate_track(
+            pts, classes, confs,
+            min_displacement=args.min_displacement,
+            av_min_ratio=args.av_min_ratio,
+            av_min_conf=args.av_min_conf,
+            drop_stationary=args.drop_stationary,
+        )
+        if keep:
+            label_of[tid] = label
+        else:
+            del frames_by_id[tid]
+
     # Reindex by frame for rendering.
     by_frame: dict[int, list] = defaultdict(list)
     for tid, frames in frames_by_id.items():
@@ -154,7 +179,7 @@ def main():
                     cv2.line(frame, pts[k - 1], pts[k], col, max(1, int(1 + 3 * fade)), cv2.LINE_AA)
 
             x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
-            cls_name = CLASS_NAMES[d["cls"]] if 0 <= d["cls"] < len(CLASS_NAMES) else str(d["cls"])
+            cls_name = label_of[tid]
             thickness = 1 if d["interp"] else 2
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
             label = f"{cls_name}#{tid}"
@@ -174,14 +199,13 @@ def main():
         for fnum in sorted(by_frame):
             for tid, d in by_frame[fnum]:
                 x1, y1, x2, y2 = d["bbox"]
-                cls_name = CLASS_NAMES[d["cls"]] if 0 <= d["cls"] < len(CLASS_NAMES) else str(d["cls"])
+                cls_name = label_of[tid]
                 wr.writerow([fnum, tid, cls_name, f"{x1:.1f}", f"{y1:.1f}",
                              f"{x2:.1f}", f"{y2:.1f}", f"{d['conf']:.3f}", int(d["interp"])])
 
     n_tracks = len(frames_by_id)
-    n_av = sum(1 for fr in frames_by_id.values()
-               if max(set(d["cls"] for d in fr.values()), key=lambda c: sum(1 for d in fr.values() if d["cls"] == c)) == 0)
-    print(f"Frames: {n_frames}  tracks: {n_tracks}  (AV-dominant: {n_av})")
+    n_av = sum(1 for lbl in label_of.values() if lbl == "AV")
+    print(f"Frames: {n_frames}  tracks: {n_tracks}  (AV: {n_av})")
     print(f"Annotated video: {out_mp4}")
     print(f"Track CSV: {out_csv}")
 

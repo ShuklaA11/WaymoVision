@@ -1,0 +1,71 @@
+{
+  "camera": "speedway",
+  "frame_size": [
+    1920,
+    1080
+  ],
+  "intersection_center": null,
+  "points": [
+    {
+      "id": 0,
+      "px": [
+        245.0,
+        140.0
+      ],
+      "lat": 30.289543,
+      "lng": -97.737069,
+      "name": "median L end"
+    },
+    {
+      "id": 1,
+      "px": [
+        560.0,
+        155.0
+      ],
+      "lat": 30.289566,
+      "lng": -97.737021,
+      "name": "median R end"
+    },
+    {
+      "id": 2,
+      "px": [
+        150.0,
+        300.0
+      ],
+      "lat": 30.28941,
+      "lng": -97.736945,
+      "name": "DeanKeeton far L lane"
+    },
+    {
+      "id": 3,
+      "px": [
+        560.0,
+        540.0
+      ],
+      "lat": 30.28939,
+      "lng": -97.736587,
+      "name": "near road center"
+    },
+    {
+      "id": 4,
+      "px": [
+        780.0,
+        610.0
+      ],
+      "lat": 30.289405,
+      "lng": -97.736436,
+      "name": "near road right"
+    },
+    {
+      "id": 5,
+      "px": [
+        470.0,
+        680.0
+      ],
+      "lat": 30.289314,
+      "lng": -97.736343,
+      "name": "near road lower"
+    }
+  ],
+  "note": "Dean Keeton St / Speedway, Austin TX. Pixels picked from midday frame; lat/lng from Google Maps. intersection_center null -> homography averages points."
+}

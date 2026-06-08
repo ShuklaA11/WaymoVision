@@ -31,6 +31,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import cv2
+
 CLIP_RE = re.compile(r"waymo_(.+)_clip(\d+)_(day|night)", re.IGNORECASE)
 
 
@@ -52,6 +54,14 @@ def infer_gcp(clip_path: str, override: str | None) -> str | None:
     if "sjb" in p:
         return "configs/gcp_sjb.json"
     return None
+
+
+def detect_fps(clip: str, fallback: float = 30.0) -> float:
+    """Read the clip's real frame rate (extracted clips are 30 fps)."""
+    cap = cv2.VideoCapture(clip)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    return round(fps, 3) if fps and fps > 1 else fallback
 
 
 def run(cmd: list[str]) -> None:
@@ -96,6 +106,9 @@ def analyze_one(clip: str, args) -> bool:
     video, clip_label = parse_names(clip)
     gcp = infer_gcp(clip, args.gcp)
     outdir = Path(args.out_root) / video / clip_label
+    if (outdir / "summary.txt").exists() and not args.force:
+        print(f"  skip (already done): {outdir}")
+        return True
     outdir.mkdir(parents=True, exist_ok=True)
     py = sys.executable
 
@@ -104,7 +117,8 @@ def analyze_one(clip: str, args) -> bool:
     map_csv, map_png = outdir / "map.csv", outdir / "map.png"
     overlay = outdir / "overlay.png"
 
-    print(f"\n=== {video} / {clip_label} -> {outdir} ===")
+    fps = args.fps if args.fps else detect_fps(clip)
+    print(f"\n=== {video} / {clip_label}  ({fps:g} fps) -> {outdir} ===")
     run([py, "track_video.py", "--video", clip, "--device", args.device,
          "--imgsz", str(args.imgsz), "--trail-len", str(args.trail_len),
          "--out", str(tracked), "--csv", str(tracks)])
@@ -112,9 +126,12 @@ def analyze_one(clip: str, args) -> bool:
          "--out-csv", str(traj_csv), "--out-plot", str(traj_png)])
 
     if gcp and Path(gcp).exists():
-        run([py, "homography.py", "--gcp", gcp, "--traj", str(traj_csv),
-             "--fps", str(args.fps), "--out-csv", str(map_csv), "--out-plot", str(map_png)])
-        run([py, "map_overlay.py", "--map", str(map_csv), "--out", str(overlay)])
+        try:  # map stages best-effort: a satellite hiccup shouldn't lose tracking output
+            run([py, "homography.py", "--gcp", gcp, "--traj", str(traj_csv),
+                 "--fps", str(fps), "--out-csv", str(map_csv), "--out-plot", str(map_png)])
+            run([py, "map_overlay.py", "--map", str(map_csv), "--out", str(overlay)])
+        except subprocess.CalledProcessError as e:
+            print(f"  map stage failed (kept tracking output): {e}")
     else:
         print(f"  (skipping map stages — no GCP file for this camera: {gcp})")
 
@@ -129,7 +146,8 @@ def main():
     ap.add_argument("--glob", default=None, help="glob pattern for many clips")
     ap.add_argument("--out-root", default="output/analysis")
     ap.add_argument("--gcp", default=None, help="override GCP file (else inferred SJB/Speedway)")
-    ap.add_argument("--fps", type=float, default=25.0)
+    ap.add_argument("--fps", type=float, default=None, help="override fps (default: auto-detect per clip)")
+    ap.add_argument("--force", action="store_true", help="re-analyze clips even if output already exists")
     ap.add_argument("--device", default="0")
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--trail-len", type=int, default=30)

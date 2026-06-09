@@ -50,16 +50,27 @@ def local_to_latlng(east, north, lat0, lng0):
 
 def build_homography(gcp: dict):
     """Pixel -> local-meter homography from GCP correspondences."""
-    lat0 = gcp["intersection_center"]["lat"]
-    lng0 = gcp["intersection_center"]["lng"]
+    pts = [p for p in gcp["points"] if p.get("lat") is not None and p.get("lng") is not None]
+    if len(pts) < 4:
+        raise SystemExit(
+            f"Need >= 4 points with lat/lng, got {len(pts)}. "
+            "Fill the lat/lng fields in the GCP file (see pick_gcp.py)."
+        )
+
+    center = gcp.get("intersection_center")
+    if center and center.get("lat") is not None:
+        lat0, lng0 = center["lat"], center["lng"]
+    else:  # fall back to the centroid of the points
+        lat0 = sum(p["lat"] for p in pts) / len(pts)
+        lng0 = sum(p["lng"] for p in pts) / len(pts)
+
     src, dst = [], []
-    for p in gcp["points"]:
+    for p in pts:
         src.append(p["px"])
         e, n = latlng_to_local(p["lat"], p["lng"], lat0, lng0)
         dst.append([e, n])
-    src = np.array(src, dtype=np.float64)
-    dst = np.array(dst, dtype=np.float64)
-    H, _ = cv2.findHomography(src, dst, method=0)
+    H, _ = cv2.findHomography(np.array(src, dtype=np.float64),
+                              np.array(dst, dtype=np.float64), method=0)
     return H, lat0, lng0
 
 
@@ -112,7 +123,7 @@ def main():
     seen = set()
     with open(out_csv, "w", newline="") as f:
         wr = csv.writer(f)
-        wr.writerow(["track_id", "class", "frame", "east_m", "north_m", "lat", "lng", "speed_mps", "speed_mph"])
+        wr.writerow(["track_id", "class", "frame", "px", "py", "east_m", "north_m", "lat", "lng", "speed_mps", "speed_mph"])
         for tid in sorted(tracks):
             t = tracks[tid]
             m = project(t["px"], H)  # Nx2 east,north
@@ -134,6 +145,7 @@ def main():
             for i in range(len(m)):
                 lat, lng = local_to_latlng(m[i, 0], m[i, 1], lat0, lng0)
                 wr.writerow([tid, t["class"], int(frames[i]),
+                             f"{t['px'][i,0]:.1f}", f"{t['px'][i,1]:.1f}",
                              f"{m[i,0]:.2f}", f"{m[i,1]:.2f}",
                              f"{lat:.7f}", f"{lng:.7f}",
                              f"{speeds[i]:.2f}", f"{speeds[i]*2.23694:.1f}"])

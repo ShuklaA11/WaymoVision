@@ -147,13 +147,26 @@ def main():
         for fnum, d in frames.items():
             by_frame[fnum].append((tid, d))
 
-    # Per-track bottom-center points (for fading trajectory trails).
+    # Per-track trail points: box CENTER, moving-average smoothed so the line
+    # stays on the car and doesn't spike when the box jumps (glare at lights,
+    # brief occlusions). Map projection still uses bottom-center separately.
+    def _smooth_xy(seq, w=9):
+        half = w // 2
+        out = []
+        for i in range(len(seq)):
+            lo, hi = max(0, i - half), min(len(seq), i + half + 1)
+            xs = [p[0] for p in seq[lo:hi]]
+            ys = [p[1] for p in seq[lo:hi]]
+            out.append((sum(xs) / len(xs), sum(ys) / len(ys)))
+        return out
+
     trail_pts: dict[int, dict[int, tuple[int, int]]] = {}
     for tid, frames in frames_by_id.items():
-        trail_pts[tid] = {
-            fn: (int((d["bbox"][0] + d["bbox"][2]) / 2), int(d["bbox"][3]))
-            for fn, d in frames.items()
-        }
+        fns = sorted(frames)
+        centers = [((frames[f]["bbox"][0] + frames[f]["bbox"][2]) / 2,
+                    (frames[f]["bbox"][1] + frames[f]["bbox"][3]) / 2) for f in fns]
+        sm = _smooth_xy(centers)
+        trail_pts[tid] = {f: (int(sm[i][0]), int(sm[i][1])) for i, f in enumerate(fns)}
 
     # Pass 2: re-read video and draw persistent boxes.
     cap = cv2.VideoCapture(str(video))

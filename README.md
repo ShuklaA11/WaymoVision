@@ -1,5 +1,7 @@
 # Waymo Vehicle Detection Pipeline
 
+*Developed as part of my research at INSPIRE Lab, UT Austin.*
+
 A two-stage computer vision pipeline that detects Waymo self-driving cars (white Jaguar I-PACE with rooftop LIDAR dome) in street surveillance video and exports short clips of each pass.
 
 The pipeline processes footage from an elevated intersection camera, identifies Waymo vehicles among regular traffic, and outputs organized video clips sorted by time of day (day/night).
